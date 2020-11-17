@@ -79,18 +79,20 @@ impl Display for Signature {
 pub struct SignatureParams {
     algorithm: Algorithm,
     key_id: String,
-    headers: Option<Vec<http::header::HeaderName>>,
+    headers: Option<Vec<String>>,
 }
 
 impl SignatureParams {
-    pub fn new<K>(_key: &K, key_id: &str, headers: Option<Vec<http::header::HeaderName>>) -> Self
+    pub fn new<K>(_key: &K, key_id: &str, headers: &[&str]) -> Self
     where
         K: SigningKey,
     {
         SignatureParams {
             algorithm: K::algorithm(),
             key_id: key_id.to_string(),
-            headers,
+            headers: headers.first().and(Some(
+                headers.iter().map(|header| header.to_string()).collect(),
+            )),
         }
     }
 
@@ -103,7 +105,7 @@ impl SignatureParams {
         let header_strings: Result<Vec<String>, String> = self
             .headers
             .as_ref()
-            .unwrap_or(&vec![http::header::DATE])
+            .unwrap_or(&vec![http::header::DATE.to_string()])
             .iter()
             .map(|header| -> Result<String, String> {
                 Ok(match header.as_str() {
@@ -131,11 +133,11 @@ impl SignatureParams {
                                     .to_string(),
                             );
                         }
-                        format!("{}: {}", header.as_str(), digest)
+                        format!("{}: {}", header, digest)
                     }
                     _ => format!(
                         "{}: {}",
-                        header.as_str(),
+                        header,
                         req.headers()
                             .get(header)
                             .ok_or("Header did not exist in the request")?
@@ -193,8 +195,8 @@ mod tests {
         let mut csprng: OsRng = OsRng::new().unwrap();
         let keypair: Keypair = Keypair::from_bytes(&HEXLOWER.decode(b"38a27e71c47efe0d50a30dd12eb4dc97e9057a11b04f4e3b58c6f0796caeb2e1d391c6f6cf8778e0801d2bfb32441d40ae4b6864040e92cb063449eb8d2a39e1").unwrap()).unwrap();
 
-        let headers = vec![http::header::HeaderName::from_static("digest")];
-        let params = SignatureParams::new(&keypair, "primary", Some(headers));
+        let headers = vec!["digest"];
+        let params = SignatureParams::new(&keypair, "primary", &headers);
 
         let req = params.sign(keypair, req).unwrap();
 
