@@ -1,5 +1,7 @@
 use core::fmt::{self, Display};
 use core::str::FromStr;
+use std::error::Error;
+
 use data_encoding::BASE64;
 use sha2::{Digest, Sha256};
 
@@ -20,12 +22,12 @@ impl Display for DigestAlgorithm {
 }
 
 impl FromStr for DigestAlgorithm {
-    type Err = String;
+    type Err = Box<dyn Error>;
 
-    fn from_str(s: &str) -> Result<Self, String> {
+    fn from_str(s: &str) -> Result<Self, Box<dyn Error>> {
         match s {
             "SHA-256" => Ok(DigestAlgorithm::SHA256),
-            _ => Err("Invalid digest type".to_string()),
+            _ => Err("Invalid digest type".into()),
         }
     }
 }
@@ -37,10 +39,14 @@ impl DigestAlgorithm {
         }
     }
 
-    pub fn from_digest(s: &str) -> Result<Self, String> {
-        let (alg, _) = s.split_at(s.find("=").ok_or("Digest was malformed".to_string())?);
-
-        Self::from_str(alg)
+    pub fn from_digest(s: &str) -> Result<Self, Box<dyn Error>> {
+        match s.find("=") {
+            Some(idx) => {
+                let (alg, _) = s.split_at(idx);
+                Self::from_str(alg)
+            }
+            _ => Err("Digest was malformed".into()),
+        }
     }
 
     pub fn calculate<T>(&self, req: &http::Request<T>) -> String
@@ -54,7 +60,7 @@ impl DigestAlgorithm {
 }
 
 pub trait WithDigest {
-    fn with_digest(self, digest: DigestAlgorithm) -> Result<Self, String>
+    fn with_digest(self, digest: DigestAlgorithm) -> Result<Self, Box<dyn Error>>
     where
         Self: Sized;
 }
@@ -63,7 +69,7 @@ impl<T> WithDigest for http::Request<T>
 where
     T: AsRef<[u8]>,
 {
-    fn with_digest(mut self, digest: DigestAlgorithm) -> Result<Self, String>
+    fn with_digest(mut self, digest: DigestAlgorithm) -> Result<Self, Box<dyn Error>>
     where
         Self: Sized,
     {
@@ -140,5 +146,4 @@ mod tests {
             "The digest algorithm was not successfully parsed from the digest header string",
         );
     }
-
 }

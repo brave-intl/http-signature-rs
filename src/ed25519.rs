@@ -1,5 +1,8 @@
+use std::convert::TryFrom;
+use std::error::Error;
+
 use data_encoding::BASE64;
-use ed25519_dalek;
+use ed25519_dalek::{Signature, Signer, Verifier};
 
 use crate::key::{Algorithm, SigningKey, VerificationKey};
 
@@ -8,21 +11,23 @@ impl SigningKey for ed25519_dalek::Keypair {
         Algorithm::Ed25519
     }
 
-    fn sign(&self, message: &str) -> Result<String, String> {
+    fn sign_string(&self, message: &str) -> Result<String, Box<dyn Error>> {
         let sig = self.sign(message.as_bytes());
         Ok(BASE64.encode(&sig.to_bytes()))
     }
 }
 
-impl VerificationKey for ed25519_dalek::PublicKey {
+impl<T> VerificationKey for T
+where
+    T: Verifier<Signature>,
+{
     fn algorithm() -> Algorithm {
         Algorithm::Ed25519
     }
 
-    fn verify(&self, message: &str, sig: &str) -> Result<(), String> {
-        let sig = BASE64.decode(sig.as_bytes()).map_err(|e| e.to_string())?;
-        let signature = ed25519_dalek::Signature::from_bytes(&sig).map_err(|e| e.to_string())?;
-        self.verify(message.as_bytes(), &signature)
-            .map_err(|e| e.to_string())
+    fn verify_signature_string(&self, message: &str, sig: &str) -> Result<(), Box<dyn Error>> {
+        let sig = BASE64.decode(sig.as_bytes())?;
+        let signature = Signature::try_from(sig.as_slice())?;
+        Ok(self.verify(message.as_bytes(), &signature)?)
     }
 }

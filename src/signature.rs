@@ -1,8 +1,9 @@
 use core::fmt::{self, Display};
-use http;
+use std::error::Error;
 
 use crate::digest::{DigestAlgorithm, DIGEST_HEADER};
 use crate::key::{Algorithm, SigningKey, VerificationKey};
+use http;
 
 /// SignatureHeader is the header consisting the HTTP signature
 pub static SIGNATURE_HEADER: &str = "signature";
@@ -28,7 +29,7 @@ impl Signature {
         params: &SignatureParams,
         key: K,
         req: &http::Request<T>,
-    ) -> Result<(), String>
+    ) -> Result<(), Box<dyn Error>>
     where
         K: VerificationKey,
         T: AsRef<[u8]>,
@@ -50,7 +51,7 @@ impl Signature {
             .to_string();
         let (_, sig) = sig.split_at(sig.find("=").ok_or("Signature was malformed".to_string())?);
 
-        key.verify(&signing_string, sig)
+        key.verify_signature_string(&signing_string, sig)
     }
 }
 
@@ -98,16 +99,16 @@ impl SignatureParams {
 
     /// signing_string builds the signing string according to the SignatureParams s and
     /// HTTP request req. it recalculates the digest header to ensure it is correct
-    pub fn signing_string<T>(&self, req: &http::Request<T>) -> Result<String, String>
+    pub fn signing_string<T>(&self, req: &http::Request<T>) -> Result<String, Box<dyn Error>>
     where
         T: AsRef<[u8]>,
     {
-        let header_strings: Result<Vec<String>, String> = self
+        let header_strings: Result<Vec<String>, Box<dyn Error>> = self
             .headers
             .as_ref()
             .unwrap_or(&vec![http::header::DATE.to_string()])
             .iter()
-            .map(|header| -> Result<String, String> {
+            .map(|header| -> Result<String, Box<dyn Error>> {
                 Ok(match header.as_str() {
                     "(request-target)" => format!(
                         "{}: {} {}",
@@ -130,7 +131,7 @@ impl SignatureParams {
                         if algorithm.calculate(req) != digest {
                             return Err(
                                 "The included digest header did not match the calculated value"
-                                    .to_string(),
+                                    .into(),
                             );
                         }
                         format!("{}: {}", header, digest)
@@ -152,12 +153,16 @@ impl SignatureParams {
     }
 
     /// Sign the provided HTTP request req using key and these parameters
-    pub fn sign<K, T>(&self, key: K, mut req: http::Request<T>) -> Result<http::Request<T>, String>
+    pub fn sign<K, T>(
+        &self,
+        key: K,
+        mut req: http::Request<T>,
+    ) -> Result<http::Request<T>, Box<dyn Error>>
     where
         K: SigningKey,
         T: AsRef<[u8]>,
     {
-        let sig = key.sign(&self.signing_string(&mut req)?)?;
+        let sig = key.sign_string(&self.signing_string(&mut req)?)?;
 
         let s = Signature::new(self, &sig);
 
@@ -175,7 +180,6 @@ mod tests {
     use data_encoding::HEXLOWER;
     use ed25519_dalek::Keypair;
     use http;
-    use rand::rngs::OsRng;
 
     use super::*;
     use crate::digest::WithDigest;
@@ -192,7 +196,6 @@ mod tests {
             .with_digest(DigestAlgorithm::SHA256)
             .unwrap();
 
-        let mut csprng: OsRng = OsRng::new().unwrap();
         let keypair: Keypair = Keypair::from_bytes(&HEXLOWER.decode(b"38a27e71c47efe0d50a30dd12eb4dc97e9057a11b04f4e3b58c6f0796caeb2e1d391c6f6cf8778e0801d2bfb32441d40ae4b6864040e92cb063449eb8d2a39e1").unwrap()).unwrap();
 
         let headers = vec!["digest"];

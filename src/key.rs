@@ -1,4 +1,5 @@
 use core::fmt::{self, Display};
+use std::error::Error;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Algorithm {
@@ -15,10 +16,10 @@ impl Display for Algorithm {
 
 pub trait SigningKey {
     fn algorithm() -> Algorithm;
-    fn sign(&self, message: &str) -> Result<String, String>;
+    fn sign_string(&self, message: &str) -> Result<String, Box<dyn Error>>;
 }
 
 pub trait VerificationKey {
     fn algorithm() -> Algorithm;
-    fn verify(&self, message: &str, sig: &str) -> Result<(), String>;
+    fn verify_signature_string(&self, message: &str, sig: &str) -> Result<(), Box<dyn Error>>;
 }
