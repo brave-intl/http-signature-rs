@@ -10,6 +10,7 @@ pub static SIGNATURE_HEADER: &str = "signature";
 /// RequestTargetHeader is a pseudo header consisting of the HTTP method and request uri
 pub static REQUEST_TARGET_HEADER: &str = "(request-target)";
 
+/// Signature represents an http signature and it's parameters
 #[derive(Clone, Debug, PartialEq)]
 pub struct Signature {
     sig: String,

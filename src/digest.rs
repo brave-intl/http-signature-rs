@@ -8,6 +8,7 @@ use sha2::{Digest, Sha256};
 /// DIGEST_HEADER is the header where a digest of the body will be stored
 pub static DIGEST_HEADER: &str = "digest";
 
+/// Supported digest algorithms
 #[derive(Clone, Debug, PartialEq)]
 pub enum DigestAlgorithm {
     SHA256,
@@ -59,6 +60,7 @@ impl DigestAlgorithm {
     }
 }
 
+/// Extension trait for automatically exposing a method to add a digest to an http request
 pub trait WithDigest {
     fn with_digest(self, digest: DigestAlgorithm) -> Result<Self, Box<dyn Error>>
     where
@@ -69,6 +71,7 @@ impl<T> WithDigest for http::Request<T>
 where
     T: AsRef<[u8]>,
 {
+    /// Calculate and set the digest header for this http request
     fn with_digest(mut self, digest: DigestAlgorithm) -> Result<Self, Box<dyn Error>>
     where
         Self: Sized,
