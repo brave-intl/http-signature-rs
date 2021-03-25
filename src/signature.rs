@@ -1,8 +1,10 @@
 use core::fmt::{self, Display};
 use std::error::Error;
+use std::str::FromStr;
+use std::collections::HashMap;
 
 use crate::digest::{DigestAlgorithm, DIGEST_HEADER};
-use crate::key::{Algorithm, SigningKey, VerificationKey};
+use crate::key::{Key, Algorithm, SigningKey, VerificationKey};
 
 /// DATE_HEADER is the header containing the date the request originated
 pub static DATE_HEADER: &str = "date";
@@ -26,17 +28,19 @@ impl Signature {
         }
     }
 
-    /// Verify that the request was signed according to the signature parameters using keypair K
+    /// Verify that the request was signed according to the passed signature params using keypair K
+    /// NOTE: this ignores the parameters within the signature header
     pub fn verify<K, T>(
         params: &SignatureParams,
-        key: K,
+        key: &K,
         req: &http::Request<T>,
     ) -> Result<(), Box<dyn Error>>
     where
         K: VerificationKey,
         T: AsRef<[u8]>,
     {
-        // TODO allow for parameters signed to include additional headers
+        // TODO allow for signature to include additional headers, currently must be
+        // strictly equal to those in the parameters
         let signing_string = params.signing_string(req)?;
 
         let signature_header = req
@@ -46,17 +50,39 @@ impl Signature {
             .to_str()
             .map_err(|e| e.to_string())?;
 
-        let sig = signature_header
-            .split(',')
-            .find(|x| x.starts_with("signature="))
-            .ok_or_else(|| "Could not find signature".to_string())?
-            .to_string();
-        let (_, sig) = sig.split_at(
-            sig.find('=')
-                .ok_or_else(|| "Signature was malformed".to_string())?,
-        );
+        let sig: Signature = signature_header.parse()?;
 
-        key.verify_signature_string(&signing_string, sig)
+        key.verify_signature_string(&signing_string, &sig.sig)
+    }
+}
+
+impl FromStr for Signature {
+    type Err = Box<dyn Error>;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        println!("{:?}", s);
+        let params: HashMap<&str,&str> = s.split(',')
+                               .filter_map(|p| -> Option<(&str, &str)> {
+                                   let mut p = p.splitn(2, '=');
+                                   Some((p.next()?, p.next()?.trim_matches('"')))
+                               })
+                               .collect();
+        println!("{:?}", params);
+        let sig = params.get("signature").ok_or_else(|| "Missing required signature field".to_string())?.to_string();
+        let algorithm = params.get("algorithm")
+            .ok_or_else(|| "Missing required algorithm field".to_string())?
+            .parse()?;
+        let key_id = params.get("keyId").ok_or_else(|| "Missing required key_id field".to_string())?.to_string();
+        let headers = params.get("headers").map(|h| h.split(' ').map(|s| s.to_string()).collect());
+
+        Ok(Signature {
+            sig: sig,
+            params: SignatureParams {
+                algorithm,
+                key_id,
+                headers,
+            }
+        })
     }
 }
 
@@ -91,10 +117,10 @@ pub struct SignatureParams {
 impl SignatureParams {
     pub fn new<K>(_key: &K, key_id: &str, headers: &[&str]) -> Self
     where
-        K: SigningKey,
+        K: Key,
     {
         SignatureParams {
-            algorithm: K::algorithm(),
+            algorithm: K::ALGORITHM,
             key_id: key_id.to_string(),
             headers: headers.first().and(Some(
                 headers.iter().map(|header| header.to_string()).collect(),
@@ -160,7 +186,7 @@ impl SignatureParams {
     /// Sign the provided HTTP request req using key and these parameters
     pub fn sign<K, T>(
         &self,
-        key: K,
+        key: &K,
         mut req: http::Request<T>,
     ) -> Result<http::Request<T>, Box<dyn Error>>
     where
@@ -183,14 +209,127 @@ impl SignatureParams {
 #[cfg(test)]
 mod tests {
     use data_encoding::HEXLOWER;
-    use ed25519_dalek::Keypair;
+    use ed25519_dalek::{Keypair, PublicKey};
     use http;
 
     use super::*;
     use crate::digest::WithDigest;
 
+    // TODO add test to cover multiple headers with different capitalization
+    // TODO add test covering request uri with query parameters
+    // TODO add test covering no headers (date only)
+
     #[test]
-    fn test_vector() {
+    fn test_signing_string() {
+        let keypair: Keypair = Keypair::from_bytes(&HEXLOWER.decode(b"00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000").unwrap()).unwrap();
+        let headers = vec![
+            "(request-target)",
+            "host",
+            "date",
+            "cache-control",
+            "x-example",
+        ];
+        let params = SignatureParams::new(&keypair, "Test", &headers);
+
+        let mut builder = http::Request::builder();
+        builder.method("GET");
+        builder.uri("https://example.com/foo");
+        builder.header("Host", "example.org");
+        builder.header("Date", "Tue, 07 Jun 2014 20:51:35 GMT");
+
+        builder.header("X-Example", "Example header with some whitespace.");
+
+        builder.header("Cache-Control", "max-age=60, must-revalidate");
+
+        let req = builder.body(vec![]).unwrap();
+
+        assert_eq!(
+            params.signing_string(&req).unwrap(), 
+"(request-target): get /foo\nhost: example.org\ndate: Tue, 07 Jun 2014 20:51:35 GMT\ncache-control: max-age=60, must-revalidate\nx-example: Example header with some whitespace."
+        );
+    }
+
+    #[test]
+    fn test_signature_to_string() {
+        let mut sig = expected_signature();
+
+	let expected = "keyId=\"Test\",algorithm=\"ed25519\",headers=\"(request-target) host date content-type digest content-length\",signature=\"Ef7MlxLXoBovhil3AlyjtBwAL9g4TN3tibLj7uuNB3CROat/9KaeQ4hW2NiJ+pZ6HQEOx9vYZAyi+7cmIkmJszJCut5kQLAwuX+Ms/mUFvpKlSo9StS2bMXDBNjOh4Auj774GFj4gwjS+3NhFeoqyr/MuN6HsEnkvn6zdgfE2i0=\"";
+
+        assert_eq!(sig.to_string(), expected);
+
+	sig.params.headers = None;
+
+	let expected = "keyId=\"Test\",algorithm=\"ed25519\",signature=\"Ef7MlxLXoBovhil3AlyjtBwAL9g4TN3tibLj7uuNB3CROat/9KaeQ4hW2NiJ+pZ6HQEOx9vYZAyi+7cmIkmJszJCut5kQLAwuX+Ms/mUFvpKlSo9StS2bMXDBNjOh4Auj774GFj4gwjS+3NhFeoqyr/MuN6HsEnkvn6zdgfE2i0=\"";
+
+        assert_eq!(sig.to_string(), expected);
+    }
+
+    fn expected_signature() -> Signature {
+        let headers = vec!["(request-target)", "host", "date", "content-type", "digest", "content-length"];
+	Signature {
+            sig: "Ef7MlxLXoBovhil3AlyjtBwAL9g4TN3tibLj7uuNB3CROat/9KaeQ4hW2NiJ+pZ6HQEOx9vYZAyi+7cmIkmJszJCut5kQLAwuX+Ms/mUFvpKlSo9StS2bMXDBNjOh4Auj774GFj4gwjS+3NhFeoqyr/MuN6HsEnkvn6zdgfE2i0=".to_string(),
+            params: SignatureParams {
+                algorithm: Algorithm::Ed25519,
+                key_id: "Test".to_string(),
+                headers: Some(headers.iter().map(|s| s.to_string()).collect()),
+            }
+        }
+    }
+
+    #[test]
+    fn test_signature_from_str() {
+	let marshalled = "keyId=\"Test\",algorithm=\"ed25519\",headers=\"(request-target) host date content-type digest content-length\",signature=\"Ef7MlxLXoBovhil3AlyjtBwAL9g4TN3tibLj7uuNB3CROat/9KaeQ4hW2NiJ+pZ6HQEOx9vYZAyi+7cmIkmJszJCut5kQLAwuX+Ms/mUFvpKlSo9StS2bMXDBNjOh4Auj774GFj4gwjS+3NhFeoqyr/MuN6HsEnkvn6zdgfE2i0=\"";
+        assert_eq!(marshalled.parse::<Signature>().unwrap(), expected_signature());
+    }
+
+    #[test]
+    fn test_signature_from_str_duplicated() {
+	let marshalled = "keyId=\"Foo\",algorithm=\"ed25519\",headers=\"(request-target) host date content-type digest content-length\",signature=\"Ef7MlxLXoBovhil3AlyjtBwAL9g4TN3tibLj7uuNB3CROat/9KaeQ4hW2NiJ+pZ6HQEOx9vYZAyi+7cmIkmJszJCut5kQLAwuX+Ms/mUFvpKlSo9StS2bMXDBNjOh4Auj774GFj4gwjS+3NhFeoqyr/MuN6HsEnkvn6zdgfE2i0=\",keyId=\"Test\"";
+        assert_eq!(marshalled.parse::<Signature>().unwrap(), expected_signature());
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_signature_from_str_missing_required_field() {
+	let marshalled = "algorithm=\"ed25519\",headers=\"(request-target) host date content-type digest content-length\",signature=\"Ef7MlxLXoBovhil3AlyjtBwAL9g4TN3tibLj7uuNB3CROat/9KaeQ4hW2NiJ+pZ6HQEOx9vYZAyi+7cmIkmJszJCut5kQLAwuX+Ms/mUFvpKlSo9StS2bMXDBNjOh4Auj774GFj4gwjS+3NhFeoqyr/MuN6HsEnkvn6zdgfE2i0=\"";
+        marshalled.parse::<Signature>().unwrap();
+    }
+
+    #[test]
+    fn test_signature_from_str_optional() {
+	let marshalled = "keyId=\"Test\",algorithm=\"ed25519\",signature=\"Ef7MlxLXoBovhil3AlyjtBwAL9g4TN3tibLj7uuNB3CROat/9KaeQ4hW2NiJ+pZ6HQEOx9vYZAyi+7cmIkmJszJCut5kQLAwuX+Ms/mUFvpKlSo9StS2bMXDBNjOh4Auj774GFj4gwjS+3NhFeoqyr/MuN6HsEnkvn6zdgfE2i0=\"";
+        let sig = marshalled.parse::<Signature>().unwrap();
+        assert_eq!(sig.params.headers, None);
+    }
+
+    #[test]
+    fn test_sign_string() {
+        let keypair: Keypair = Keypair::from_bytes(&HEXLOWER.decode(b"96aa9ec42242a9a62196281045705196a64e12b15e9160bbb630e38385b82700e7876fd5cc3a228dad634816f4ec4b80a258b2a552467e5d26f30003211bc45d").unwrap()).unwrap();
+
+        let headers = vec!["foo"];
+        let params = SignatureParams::new(&keypair, "primary", &headers);
+
+        let mut builder = http::Request::builder();
+        builder.method("GET");
+        builder.uri("https://example.com/foo");
+        builder.header("Foo", "bar");
+
+        let req = builder.body(vec![]).unwrap();
+
+        let sig = keypair.sign_string(&params.signing_string(&req).unwrap()).unwrap();
+        assert_eq!(
+            sig,
+            "RbGSX1MttcKCpCkq9nsPGkdJGUZsAU+0TpiXJYkwde+0ZwxEp9dXO3v17DwyGLXjv385253RdGI7URbrI7J6DQ==",
+        );
+    }
+
+    #[test]
+    fn test_sign_with_digest() {
+        let keypair: Keypair = Keypair::from_bytes(&HEXLOWER.decode(b"38a27e71c47efe0d50a30dd12eb4dc97e9057a11b04f4e3b58c6f0796caeb2e1d391c6f6cf8778e0801d2bfb32441d40ae4b6864040e92cb063449eb8d2a39e1").unwrap()).unwrap();
+
+        let headers = vec!["digest"];
+        let params = SignatureParams::new(&keypair, "primary", &headers);
+
         let mut builder = http::Request::builder();
         builder.method("PUT");
         builder.uri("https://example.com/");
@@ -201,12 +340,7 @@ mod tests {
             .with_digest(DigestAlgorithm::SHA256)
             .unwrap();
 
-        let keypair: Keypair = Keypair::from_bytes(&HEXLOWER.decode(b"38a27e71c47efe0d50a30dd12eb4dc97e9057a11b04f4e3b58c6f0796caeb2e1d391c6f6cf8778e0801d2bfb32441d40ae4b6864040e92cb063449eb8d2a39e1").unwrap()).unwrap();
-
-        let headers = vec!["digest"];
-        let params = SignatureParams::new(&keypair, "primary", &headers);
-
-        let req = params.sign(keypair, req).unwrap();
+        let req = params.sign(&keypair, req).unwrap();
 
         assert_eq!(
             req.headers().get("digest").unwrap().to_str().unwrap(),
@@ -217,5 +351,48 @@ mod tests {
             req.headers().get("signature").unwrap().to_str().unwrap(), 
             "keyId=\"primary\",algorithm=\"ed25519\",headers=\"digest\",signature=\"3Jibr+qWVQ+HhRQDt4gEoaD7lLcJggLLyX2yYODs4Y4tluo6EDLGqUDkrc+dGoatNDE/BbrXx686Z9zJeMjKCA==\"",
         );
+    }
+
+    #[test]
+    fn test_verify() {
+        let pub_key: PublicKey = PublicKey::from_bytes(&HEXLOWER.decode(b"e7876fd5cc3a228dad634816f4ec4b80a258b2a552467e5d26f30003211bc45d").unwrap()).unwrap();
+
+        let headers = vec!["foo"];
+        let params = SignatureParams::new(&pub_key, "primary", &headers);
+
+        let sig = "RbGSX1MttcKCpCkq9nsPGkdJGUZsAU+0TpiXJYkwde+0ZwxEp9dXO3v17DwyGLXjv385253RdGI7URbrI7J6DQ==";
+
+        let mut builder = http::Request::builder();
+        builder.method("GET");
+        builder.uri("https://example.com/foo");
+        builder.header("Foo", "bar");
+
+	builder.header("Signature", format!("keyId=\"primary\",algorithm=\"ed25519\",headers=\"foo\",signature=\"{}\"", sig));
+
+        let req: http::Request<Vec<u8>> = builder.body(vec![]).unwrap();
+
+        Signature::verify(&params, &pub_key, &req).unwrap();
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_verify_incorrect() {
+        let pub_key: PublicKey = PublicKey::from_bytes(&HEXLOWER.decode(b"e7876fd5cc3a228dad634816f4ec4b80a258b2a552467e5d26f30003211bc45d").unwrap()).unwrap();
+
+        let headers = vec!["foo"];
+        let params = SignatureParams::new(&pub_key, "primary", &headers);
+
+	let sig = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
+
+        let mut builder = http::Request::builder();
+        builder.method("GET");
+        builder.uri("https://example.com/foo");
+        builder.header("Foo", "bar");
+
+	builder.header("Signature", format!("keyId=\"primary\",algorithm=\"ed25519\",headers=\"foo\",signature=\"{}\"", sig));
+
+        let req: http::Request<Vec<u8>> = builder.body(vec![]).unwrap();
+
+        Signature::verify(&params, &pub_key, &req).unwrap();
     }
 }

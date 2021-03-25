@@ -28,7 +28,7 @@ fn main() {
     let headers = vec!["digest"];
     let params = SignatureParams::new(&keypair, "primary", &headers);
 
-    let req = params.sign(keypair, req).unwrap();
+    let req = params.sign(&keypair, req).unwrap();
     println!("{:?}", req);
 }
 ```
