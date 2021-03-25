@@ -1,10 +1,10 @@
 use core::fmt::{self, Display};
+use std::collections::HashMap;
 use std::error::Error;
 use std::str::FromStr;
-use std::collections::HashMap;
 
 use crate::digest::{DigestAlgorithm, DIGEST_HEADER};
-use crate::key::{Key, Algorithm, SigningKey, VerificationKey};
+use crate::key::{Algorithm, Key, SigningKey, VerificationKey};
 
 /// DATE_HEADER is the header containing the date the request originated
 pub static DATE_HEADER: &str = "date";
@@ -61,27 +61,37 @@ impl FromStr for Signature {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         println!("{:?}", s);
-        let params: HashMap<&str,&str> = s.split(',')
-                               .filter_map(|p| -> Option<(&str, &str)> {
-                                   let mut p = p.splitn(2, '=');
-                                   Some((p.next()?, p.next()?.trim_matches('"')))
-                               })
-                               .collect();
+        let params: HashMap<&str, &str> = s
+            .split(',')
+            .filter_map(|p| -> Option<(&str, &str)> {
+                let mut p = p.splitn(2, '=');
+                Some((p.next()?, p.next()?.trim_matches('"')))
+            })
+            .collect();
         println!("{:?}", params);
-        let sig = params.get("signature").ok_or_else(|| "Missing required signature field".to_string())?.to_string();
-        let algorithm = params.get("algorithm")
+        let sig = params
+            .get("signature")
+            .ok_or_else(|| "Missing required signature field".to_string())?
+            .to_string();
+        let algorithm = params
+            .get("algorithm")
             .ok_or_else(|| "Missing required algorithm field".to_string())?
             .parse()?;
-        let key_id = params.get("keyId").ok_or_else(|| "Missing required key_id field".to_string())?.to_string();
-        let headers = params.get("headers").map(|h| h.split(' ').map(|s| s.to_string()).collect());
+        let key_id = params
+            .get("keyId")
+            .ok_or_else(|| "Missing required key_id field".to_string())?
+            .to_string();
+        let headers = params
+            .get("headers")
+            .map(|h| h.split(' ').map(|s| s.to_string()).collect());
 
         Ok(Signature {
-            sig: sig,
+            sig,
             params: SignatureParams {
                 algorithm,
                 key_id,
                 headers,
-            }
+            },
         })
     }
 }
@@ -244,7 +254,7 @@ mod tests {
         let req = builder.body(vec![]).unwrap();
 
         assert_eq!(
-            params.signing_string(&req).unwrap(), 
+            params.signing_string(&req).unwrap(),
 "(request-target): get /foo\nhost: example.org\ndate: Tue, 07 Jun 2014 20:51:35 GMT\ncache-control: max-age=60, must-revalidate\nx-example: Example header with some whitespace."
         );
     }
@@ -253,20 +263,27 @@ mod tests {
     fn test_signature_to_string() {
         let mut sig = expected_signature();
 
-	let expected = "keyId=\"Test\",algorithm=\"ed25519\",headers=\"(request-target) host date content-type digest content-length\",signature=\"Ef7MlxLXoBovhil3AlyjtBwAL9g4TN3tibLj7uuNB3CROat/9KaeQ4hW2NiJ+pZ6HQEOx9vYZAyi+7cmIkmJszJCut5kQLAwuX+Ms/mUFvpKlSo9StS2bMXDBNjOh4Auj774GFj4gwjS+3NhFeoqyr/MuN6HsEnkvn6zdgfE2i0=\"";
+        let expected = "keyId=\"Test\",algorithm=\"ed25519\",headers=\"(request-target) host date content-type digest content-length\",signature=\"Ef7MlxLXoBovhil3AlyjtBwAL9g4TN3tibLj7uuNB3CROat/9KaeQ4hW2NiJ+pZ6HQEOx9vYZAyi+7cmIkmJszJCut5kQLAwuX+Ms/mUFvpKlSo9StS2bMXDBNjOh4Auj774GFj4gwjS+3NhFeoqyr/MuN6HsEnkvn6zdgfE2i0=\"";
 
         assert_eq!(sig.to_string(), expected);
 
-	sig.params.headers = None;
+        sig.params.headers = None;
 
-	let expected = "keyId=\"Test\",algorithm=\"ed25519\",signature=\"Ef7MlxLXoBovhil3AlyjtBwAL9g4TN3tibLj7uuNB3CROat/9KaeQ4hW2NiJ+pZ6HQEOx9vYZAyi+7cmIkmJszJCut5kQLAwuX+Ms/mUFvpKlSo9StS2bMXDBNjOh4Auj774GFj4gwjS+3NhFeoqyr/MuN6HsEnkvn6zdgfE2i0=\"";
+        let expected = "keyId=\"Test\",algorithm=\"ed25519\",signature=\"Ef7MlxLXoBovhil3AlyjtBwAL9g4TN3tibLj7uuNB3CROat/9KaeQ4hW2NiJ+pZ6HQEOx9vYZAyi+7cmIkmJszJCut5kQLAwuX+Ms/mUFvpKlSo9StS2bMXDBNjOh4Auj774GFj4gwjS+3NhFeoqyr/MuN6HsEnkvn6zdgfE2i0=\"";
 
         assert_eq!(sig.to_string(), expected);
     }
 
     fn expected_signature() -> Signature {
-        let headers = vec!["(request-target)", "host", "date", "content-type", "digest", "content-length"];
-	Signature {
+        let headers = vec![
+            "(request-target)",
+            "host",
+            "date",
+            "content-type",
+            "digest",
+            "content-length",
+        ];
+        Signature {
             sig: "Ef7MlxLXoBovhil3AlyjtBwAL9g4TN3tibLj7uuNB3CROat/9KaeQ4hW2NiJ+pZ6HQEOx9vYZAyi+7cmIkmJszJCut5kQLAwuX+Ms/mUFvpKlSo9StS2bMXDBNjOh4Auj774GFj4gwjS+3NhFeoqyr/MuN6HsEnkvn6zdgfE2i0=".to_string(),
             params: SignatureParams {
                 algorithm: Algorithm::Ed25519,
@@ -278,26 +295,32 @@ mod tests {
 
     #[test]
     fn test_signature_from_str() {
-	let marshalled = "keyId=\"Test\",algorithm=\"ed25519\",headers=\"(request-target) host date content-type digest content-length\",signature=\"Ef7MlxLXoBovhil3AlyjtBwAL9g4TN3tibLj7uuNB3CROat/9KaeQ4hW2NiJ+pZ6HQEOx9vYZAyi+7cmIkmJszJCut5kQLAwuX+Ms/mUFvpKlSo9StS2bMXDBNjOh4Auj774GFj4gwjS+3NhFeoqyr/MuN6HsEnkvn6zdgfE2i0=\"";
-        assert_eq!(marshalled.parse::<Signature>().unwrap(), expected_signature());
+        let marshalled = "keyId=\"Test\",algorithm=\"ed25519\",headers=\"(request-target) host date content-type digest content-length\",signature=\"Ef7MlxLXoBovhil3AlyjtBwAL9g4TN3tibLj7uuNB3CROat/9KaeQ4hW2NiJ+pZ6HQEOx9vYZAyi+7cmIkmJszJCut5kQLAwuX+Ms/mUFvpKlSo9StS2bMXDBNjOh4Auj774GFj4gwjS+3NhFeoqyr/MuN6HsEnkvn6zdgfE2i0=\"";
+        assert_eq!(
+            marshalled.parse::<Signature>().unwrap(),
+            expected_signature()
+        );
     }
 
     #[test]
     fn test_signature_from_str_duplicated() {
-	let marshalled = "keyId=\"Foo\",algorithm=\"ed25519\",headers=\"(request-target) host date content-type digest content-length\",signature=\"Ef7MlxLXoBovhil3AlyjtBwAL9g4TN3tibLj7uuNB3CROat/9KaeQ4hW2NiJ+pZ6HQEOx9vYZAyi+7cmIkmJszJCut5kQLAwuX+Ms/mUFvpKlSo9StS2bMXDBNjOh4Auj774GFj4gwjS+3NhFeoqyr/MuN6HsEnkvn6zdgfE2i0=\",keyId=\"Test\"";
-        assert_eq!(marshalled.parse::<Signature>().unwrap(), expected_signature());
+        let marshalled = "keyId=\"Foo\",algorithm=\"ed25519\",headers=\"(request-target) host date content-type digest content-length\",signature=\"Ef7MlxLXoBovhil3AlyjtBwAL9g4TN3tibLj7uuNB3CROat/9KaeQ4hW2NiJ+pZ6HQEOx9vYZAyi+7cmIkmJszJCut5kQLAwuX+Ms/mUFvpKlSo9StS2bMXDBNjOh4Auj774GFj4gwjS+3NhFeoqyr/MuN6HsEnkvn6zdgfE2i0=\",keyId=\"Test\"";
+        assert_eq!(
+            marshalled.parse::<Signature>().unwrap(),
+            expected_signature()
+        );
     }
 
     #[test]
     #[should_panic]
     fn test_signature_from_str_missing_required_field() {
-	let marshalled = "algorithm=\"ed25519\",headers=\"(request-target) host date content-type digest content-length\",signature=\"Ef7MlxLXoBovhil3AlyjtBwAL9g4TN3tibLj7uuNB3CROat/9KaeQ4hW2NiJ+pZ6HQEOx9vYZAyi+7cmIkmJszJCut5kQLAwuX+Ms/mUFvpKlSo9StS2bMXDBNjOh4Auj774GFj4gwjS+3NhFeoqyr/MuN6HsEnkvn6zdgfE2i0=\"";
+        let marshalled = "algorithm=\"ed25519\",headers=\"(request-target) host date content-type digest content-length\",signature=\"Ef7MlxLXoBovhil3AlyjtBwAL9g4TN3tibLj7uuNB3CROat/9KaeQ4hW2NiJ+pZ6HQEOx9vYZAyi+7cmIkmJszJCut5kQLAwuX+Ms/mUFvpKlSo9StS2bMXDBNjOh4Auj774GFj4gwjS+3NhFeoqyr/MuN6HsEnkvn6zdgfE2i0=\"";
         marshalled.parse::<Signature>().unwrap();
     }
 
     #[test]
     fn test_signature_from_str_optional() {
-	let marshalled = "keyId=\"Test\",algorithm=\"ed25519\",signature=\"Ef7MlxLXoBovhil3AlyjtBwAL9g4TN3tibLj7uuNB3CROat/9KaeQ4hW2NiJ+pZ6HQEOx9vYZAyi+7cmIkmJszJCut5kQLAwuX+Ms/mUFvpKlSo9StS2bMXDBNjOh4Auj774GFj4gwjS+3NhFeoqyr/MuN6HsEnkvn6zdgfE2i0=\"";
+        let marshalled = "keyId=\"Test\",algorithm=\"ed25519\",signature=\"Ef7MlxLXoBovhil3AlyjtBwAL9g4TN3tibLj7uuNB3CROat/9KaeQ4hW2NiJ+pZ6HQEOx9vYZAyi+7cmIkmJszJCut5kQLAwuX+Ms/mUFvpKlSo9StS2bMXDBNjOh4Auj774GFj4gwjS+3NhFeoqyr/MuN6HsEnkvn6zdgfE2i0=\"";
         let sig = marshalled.parse::<Signature>().unwrap();
         assert_eq!(sig.params.headers, None);
     }
@@ -316,7 +339,9 @@ mod tests {
 
         let req = builder.body(vec![]).unwrap();
 
-        let sig = keypair.sign_string(&params.signing_string(&req).unwrap()).unwrap();
+        let sig = keypair
+            .sign_string(&params.signing_string(&req).unwrap())
+            .unwrap();
         assert_eq!(
             sig,
             "RbGSX1MttcKCpCkq9nsPGkdJGUZsAU+0TpiXJYkwde+0ZwxEp9dXO3v17DwyGLXjv385253RdGI7URbrI7J6DQ==",
@@ -355,7 +380,12 @@ mod tests {
 
     #[test]
     fn test_verify() {
-        let pub_key: PublicKey = PublicKey::from_bytes(&HEXLOWER.decode(b"e7876fd5cc3a228dad634816f4ec4b80a258b2a552467e5d26f30003211bc45d").unwrap()).unwrap();
+        let pub_key: PublicKey = PublicKey::from_bytes(
+            &HEXLOWER
+                .decode(b"e7876fd5cc3a228dad634816f4ec4b80a258b2a552467e5d26f30003211bc45d")
+                .unwrap(),
+        )
+        .unwrap();
 
         let headers = vec!["foo"];
         let params = SignatureParams::new(&pub_key, "primary", &headers);
@@ -367,7 +397,13 @@ mod tests {
         builder.uri("https://example.com/foo");
         builder.header("Foo", "bar");
 
-	builder.header("Signature", format!("keyId=\"primary\",algorithm=\"ed25519\",headers=\"foo\",signature=\"{}\"", sig));
+        builder.header(
+            "Signature",
+            format!(
+                "keyId=\"primary\",algorithm=\"ed25519\",headers=\"foo\",signature=\"{}\"",
+                sig
+            ),
+        );
 
         let req: http::Request<Vec<u8>> = builder.body(vec![]).unwrap();
 
@@ -377,19 +413,30 @@ mod tests {
     #[test]
     #[should_panic]
     fn test_verify_incorrect() {
-        let pub_key: PublicKey = PublicKey::from_bytes(&HEXLOWER.decode(b"e7876fd5cc3a228dad634816f4ec4b80a258b2a552467e5d26f30003211bc45d").unwrap()).unwrap();
+        let pub_key: PublicKey = PublicKey::from_bytes(
+            &HEXLOWER
+                .decode(b"e7876fd5cc3a228dad634816f4ec4b80a258b2a552467e5d26f30003211bc45d")
+                .unwrap(),
+        )
+        .unwrap();
 
         let headers = vec!["foo"];
         let params = SignatureParams::new(&pub_key, "primary", &headers);
 
-	let sig = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
+        let sig = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
 
         let mut builder = http::Request::builder();
         builder.method("GET");
         builder.uri("https://example.com/foo");
         builder.header("Foo", "bar");
 
-	builder.header("Signature", format!("keyId=\"primary\",algorithm=\"ed25519\",headers=\"foo\",signature=\"{}\"", sig));
+        builder.header(
+            "Signature",
+            format!(
+                "keyId=\"primary\",algorithm=\"ed25519\",headers=\"foo\",signature=\"{}\"",
+                sig
+            ),
+        );
 
         let req: http::Request<Vec<u8>> = builder.body(vec![]).unwrap();
 
