@@ -3,12 +3,13 @@ use std::error::Error;
 
 use crate::digest::{DigestAlgorithm, DIGEST_HEADER};
 use crate::key::{Algorithm, SigningKey, VerificationKey};
-use http;
 
-/// SignatureHeader is the header consisting the HTTP signature
-pub static SIGNATURE_HEADER: &str = "signature";
-/// RequestTargetHeader is a pseudo header consisting of the HTTP method and request uri
+/// DATE_HEADER is the header containing the date the request originated
+pub static DATE_HEADER: &str = "date";
+/// REQUEST_TARGET_HEADER is a pseudo header consisting of the HTTP method and request uri
 pub static REQUEST_TARGET_HEADER: &str = "(request-target)";
+/// SIGNATURE_HEADER is the header consisting the HTTP signature
+pub static SIGNATURE_HEADER: &str = "signature";
 
 /// Signature represents an http signature and it's parameters
 #[derive(Clone, Debug, PartialEq)]
@@ -19,10 +20,10 @@ pub struct Signature {
 
 impl Signature {
     pub(crate) fn new(params: &SignatureParams, sig: &str) -> Self {
-        return Signature {
+        Signature {
             params: params.clone(),
             sig: sig.to_string(),
-        };
+        }
     }
 
     /// Verify that the request was signed according to the signature parameters using keypair K
@@ -48,9 +49,12 @@ impl Signature {
         let sig = signature_header
             .split(',')
             .find(|x| x.starts_with("signature="))
-            .ok_or("Could not find signature".to_string())?
+            .ok_or_else(|| "Could not find signature".to_string())?
             .to_string();
-        let (_, sig) = sig.split_at(sig.find("=").ok_or("Signature was malformed".to_string())?);
+        let (_, sig) = sig.split_at(
+            sig.find('=')
+                .ok_or_else(|| "Signature was malformed".to_string())?,
+        );
 
         key.verify_signature_string(&signing_string, sig)
     }
@@ -65,8 +69,8 @@ impl Display for Signature {
             .map(|headers| -> Vec<String> {
                 headers.iter().map(|h| h.as_str().to_string()).collect()
             })
-            .map(|headers| format!(",headers=\"{}\"", headers.join(" ")).to_string())
-            .unwrap_or("".to_string());
+            .map(|headers| format!(",headers=\"{}\"", headers.join(" ")))
+            .unwrap_or_else(|| "".to_string());
 
         write!(
             f,
@@ -107,7 +111,7 @@ impl SignatureParams {
         let header_strings: Result<Vec<String>, Box<dyn Error>> = self
             .headers
             .as_ref()
-            .unwrap_or(&vec![http::header::DATE.to_string()])
+            .unwrap_or(&vec![DATE_HEADER.to_string()])
             .iter()
             .map(|header| -> Result<String, Box<dyn Error>> {
                 Ok(match header.as_str() {
@@ -117,7 +121,7 @@ impl SignatureParams {
                         req.method().as_str().to_lowercase(),
                         req.uri()
                             .path_and_query()
-                            .ok_or("Could not retrieve path and query".to_string())?
+                            .ok_or_else(|| "Could not retrieve path and query".to_string())?
                             .as_str(),
                     ),
                     "digest" => {
@@ -128,7 +132,7 @@ impl SignatureParams {
                             .to_str()
                             .map_err(|e| e.to_string())?;
 
-                        let algorithm = DigestAlgorithm::from_digest(digest)?;
+                        let algorithm = DigestAlgorithm::from_digest_header(digest)?;
                         if algorithm.calculate(req) != digest {
                             return Err(
                                 "The included digest header did not match the calculated value"
@@ -163,7 +167,7 @@ impl SignatureParams {
         K: SigningKey,
         T: AsRef<[u8]>,
     {
-        let sig = key.sign_string(&self.signing_string(&mut req)?)?;
+        let sig = key.sign_string(&self.signing_string(&req)?)?;
 
         let s = Signature::new(self, &sig);
 

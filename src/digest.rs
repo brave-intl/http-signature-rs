@@ -34,14 +34,14 @@ impl FromStr for DigestAlgorithm {
 }
 
 impl DigestAlgorithm {
-    pub fn new(&self) -> impl Digest {
+    pub fn new_hasher(&self) -> impl Digest {
         match *self {
             DigestAlgorithm::SHA256 => Sha256::new(),
         }
     }
 
-    pub fn from_digest(s: &str) -> Result<Self, Box<dyn Error>> {
-        match s.find("=") {
+    pub fn from_digest_header(s: &str) -> Result<Self, Box<dyn Error>> {
+        match s.find('=') {
             Some(idx) => {
                 let (alg, _) = s.split_at(idx);
                 Self::from_str(alg)
@@ -54,9 +54,9 @@ impl DigestAlgorithm {
     where
         T: AsRef<[u8]>,
     {
-        let mut hasher = self.new();
+        let mut hasher = self.new_hasher();
         hasher.input(req.body());
-        format!("{}={}", self, BASE64.encode(&hasher.result())).to_string()
+        format!("{}={}", self, BASE64.encode(&hasher.result()))
     }
 }
 
@@ -141,10 +141,12 @@ mod tests {
     }
 
     #[test]
-    fn test_from_digest() {
+    fn test_from_digest_header() {
         assert_eq!(
-            DigestAlgorithm::from_digest("SHA-256=uU0nuZNNPgilLlLX2n2r+sSE7+N6U4DukIj3rOLvzek=")
-                .unwrap(),
+            DigestAlgorithm::from_digest_header(
+                "SHA-256=uU0nuZNNPgilLlLX2n2r+sSE7+N6U4DukIj3rOLvzek="
+            )
+            .unwrap(),
             DigestAlgorithm::SHA256,
             "The digest algorithm was not successfully parsed from the digest header string",
         );
