@@ -60,7 +60,6 @@ impl FromStr for Signature {
     type Err = Box<dyn Error>;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        println!("{:?}", s);
         let params: HashMap<&str, &str> = s
             .split(',')
             .filter_map(|p| -> Option<(&str, &str)> {
@@ -68,7 +67,6 @@ impl FromStr for Signature {
                 Some((p.next()?, p.next()?.trim_matches('"')))
             })
             .collect();
-        println!("{:?}", params);
         let sig = params
             .get("signature")
             .ok_or_else(|| "Missing required signature field".to_string())?

@@ -2,7 +2,7 @@
 
 Minimal implementation of HTTP request signatures including digest generation according to <https://tools.ietf.org/html/draft-cavage-http-signatures-08>.
 
-Only supports ed25519 signatures and sha256 digests.
+Only supports the signature header (not authorization) with ed25519 signatures and sha256 digests.
 
 ```rust
 use ed25519_dalek::Keypair;
